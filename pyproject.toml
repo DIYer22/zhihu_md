@@ -16,7 +16,8 @@ license = {text = "MIT"}
 readme = "README.md"
 requires-python = ">=3.7"
 dependencies = [
-    "boxx",
+    "chardet",
+    "Pillow",
 ]
 classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
@@ -24,6 +25,9 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 keywords = ["zhihu_md"]
+
+[project.scripts]
+zhihu-md = "zhihu_md.main:main"
 
 [project.urls]
 Homepage = "https://github.com/DIYer22/zhihu_md"
