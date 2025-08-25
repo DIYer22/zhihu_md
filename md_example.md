@@ -56,15 +56,19 @@
 
 ## 图像
 
-GitHub repo 图（也能成功）:
+GitHub mirror 图（能成功）:
 
 ![](https://ghfast.top/https://raw.githubusercontent.com/Discrete-Distribution-Networks/Discrete-Distribution-Networks.github.io/main/img/ddn-intro.png)
 
-GitHub raw URL 图（知乎图片上传失败）:
+GitHub raw=true URL 图（知乎图片上传失败）:
 
 ![](https://github.com/Discrete-Distribution-Networks/Discrete-Distribution-Networks.github.io/blob/main/img/ddn-intro.png?raw=true)
 
-`githu.io` URL 图（能直接导入）：  
+GitHub raw.githubusercontent URL 图（能成功）:
+
+![](https://raw.githubusercontent.com/Discrete-Distribution-Networks/Discrete-Distribution-Networks.github.io/main/img/ddn-intro.png)
+
+`githu.io` URL 图（有时候成功、有时候失败）：  
 
 ![](https://discrete-distribution-networks.github.io/img/2d-density.png)
 

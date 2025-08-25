@@ -8,14 +8,7 @@ import os.path as op
 from PIL import Image
 from pathlib import Path
 
-###############################################################################################################
-## Please change the GITHUB_REPO_PREFIX value according to your own GitHub user name and repo name. ##
-###############################################################################################################
-# GITHUB_REPO_PREFIX = "https://raw.githubusercontent.com/`YourUserName`/`YourRepoName`/main/"
-# Your repo remote link (without Data folder)
-GITHUB_REPO_PREFIX = (
-    "http://113.44.140.251:9000/junk/Discrete-Distribution-Networks.github.io/"
-)
+
 COMPRESS_THRESHOLD = 5e5  # The threshold of compression
 
 
@@ -74,7 +67,10 @@ def rename_image_ref(m, original=True):
         return m.group(0)  # Return original if file doesn't exist
 
     # Convert relative path to GitHub absolute URL
-    github_url = GITHUB_REPO_PREFIX + ori_path
+    def relative_path_to_zhihu_url(relative_path):
+        return "http://113.44.140.251:9000/junk/Discrete-Distribution-Networks.github.io/" + relative_path
+
+    github_url = relative_path_to_zhihu_url(ori_path)
 
     print(f"Local path: {full_local_path}")
     print(f"GitHub URL: {github_url}")
@@ -83,11 +79,6 @@ def rename_image_ref(m, original=True):
         return "![" + m.group(1) + "](" + github_url + ")"
     else:
         return '<img src="' + github_url + '"'
-
-
-def cleanup_image_folder():
-    # This function is no longer needed since we don't copy files
-    pass
 
 
 # Search for the image links which appear in the markdown file. It can handle two types: ![]() and <img src="LINK" alt="CAPTION" style="zoom:40%;" />.
