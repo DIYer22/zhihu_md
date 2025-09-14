@@ -20,7 +20,7 @@ python -m zhihu_md your_markdown.md  # 或者 zhihu_md xxx.md
 ### 图片上传
 - 知乎无法通过 `https://github.com/{user-name}/{repo-name}/blob/main/img.png?raw=true` 这种 URL 形式上传 Github 图像
 - 但可以走各式各样的 [GitHub 镜像站](https://zhuanlan.zhihu.com/p/706370088) 来中转 repo 中的 image URL
-    - 默认方案，用的 `https://bgithub.xyz/`，失效了可自行更换 GitHub 镜像站
+    - 默认方案，用的 `https://bgithub.xyz/`，失效了可通过 `-m MIRROR_URL` 自行更换 GitHub 镜像站
 - 这些 URL 只需让 知乎 服务器访问一次，就可以完成上传
 
 
