@@ -1,6 +1,5 @@
 import os
 import re
-import argparse
 import subprocess
 import chardet
 import functools
@@ -13,46 +12,52 @@ try:
 except ImportError:
     Image = None
 
+DEFAULT_MIRROR_URL = "https://bgithub.xyz/"
+
 
 class ZhihuMDConverter:
     """
     知乎 Markdown 转换器
 
-    用于将普通 Markdown 文件转换为适合知乎导入的格式，
-    主要处理图片链接和数学公式。
+    将普通 Markdown 转为知乎可导入格式，主要处理图片链接与公式。
     """
 
-    COMPRESS_THRESHOLD = 5e5  # The threshold of compression
+    COMPRESS_THRESHOLD = 5e5  # 图片压缩阈值（暂未启用）
 
     def __init__(
         self,
-        base_url: str = None,
+        mirror_url: str = None,
         encoding: Optional[str] = None,
         compress_images: bool = False,
     ):
         """
-        初始化转换器
+        初始化
 
         Args:
-            base_url: 图片的基础 URL
-            encoding: 文件编码，如果为 None 会自动检测
-            compress_images: 是否压缩图片（当前未使用）
+            mirror_url: 额外前缀（如自建 CDN），会直接拼接在最终图片 URL 前
+            encoding: 文件编码，None 时自动检测
+            compress_images: 是否压缩图片（暂未启用）
         """
-        self.base_url = base_url
+        self.mirror_url = mirror_url
         self.encoding = encoding
         self.compress_images = compress_images
+        # 以下属性在转换时计算
+        self.git_root: Optional[Path] = None
+        self.raw_mirror_url: Optional[str] = (
+            None  # 形如 https://raw.githubusercontent.com/owner/repo/branch/
+        )
 
     def detect_encoding(self, file_path: Union[str, Path]) -> str:
-        """检测文件编码"""
+        """自动检测文件编码"""
         with open(str(file_path), "rb") as f:
             raw_data = f.read()
             result = chardet.detect(raw_data)
             detected_encoding = result["encoding"]
-            print(f"Detected encoding: {result}")
+            print(f"检测到编码: {result}")
             return detected_encoding
 
     def formula_ops_old(self, lines: str) -> str:
-        """旧版公式处理（转换为图片）"""
+        """旧版公式处理（转为图片）"""
         lines = re.sub(
             "((.*?)\$\$)(\s*)?([\s\S]*?)(\$\$)\n",
             '\n<img src="https://www.zhihu.com/equation?tex=\\4" alt="\\4" class="ee_img tr_noresize" eeimg="1">\n',
@@ -66,29 +71,184 @@ class ZhihuMDConverter:
         return lines
 
     def formula_ops(self, lines: str) -> str:
-        """处理公式，将单个 $ 包围的公式转换为 $$ 包围"""
+        """将 $...$ 转为 $$...$$（知乎更稳）"""
         lines = re.sub("(\$)(?!\$)(.*?)(\$)", " $$\\2$$ ", lines)
         return lines
 
+    # ---------------- Git / URL 相关 ----------------
+    def find_github_url(self, start_path: Union[str, Path]) -> str:
+        """
+        基于 start_path 查找 git 根目录与 GitHub 仓库信息，设置 raw_mirror_url。
+        无 git 仓库时提示用户先 git clone；无 GitHub 远程时提示必须属于 GitHub 仓库。
+
+        返回 GitHub 项目页 URL（https://github.com/owner/repo）。
+        """
+        start_path = Path(start_path).resolve()
+        work_dir = start_path if start_path.is_dir() else start_path.parent
+
+        # 1) 找 git 根
+        try:
+            git_root = (
+                subprocess.check_output(
+                    ["git", "-C", str(work_dir), "rev-parse", "--show-toplevel"],
+                    stderr=subprocess.STDOUT,
+                )
+                .decode()
+                .strip()
+            )
+        except subprocess.CalledProcessError:
+            raise RuntimeError(
+                "未检测到 git 仓库，请先 git clone 对应的 GitHub 仓库后再运行。"
+            )
+
+        self.git_root = Path(git_root)
+
+        # 2) 找远程并解析 GitHub 地址
+        try:
+            remote_txt = subprocess.check_output(
+                ["git", "-C", git_root, "remote", "-v"], stderr=subprocess.STDOUT
+            ).decode()
+        except subprocess.CalledProcessError:
+            raise RuntimeError("读取 git remote 失败，请检查仓库配置。")
+
+        # 选择优先 origin 的 GitHub 远程
+        github_url = None
+        candidates = []
+        for line in remote_txt.splitlines():
+            # 例: origin  https://github.com/owner/repo.git (fetch)
+            #     origin  git@github.com:owner/repo.git (push)
+            parts = line.split()
+            if len(parts) >= 2:
+                name, url = parts[0], parts[1]
+                if "github.com" in url:
+                    if name == "origin":
+                        candidates.insert(0, url)
+                    else:
+                        candidates.append(url)
+        if candidates:
+            raw_url = candidates[0]
+            # 统一为 https://github.com/owner/repo 形式
+            if raw_url.startswith("git@github.com:"):
+                owner_repo = raw_url.split(":", 1)[1]
+                owner_repo = owner_repo.rstrip(".git")
+                github_url = f"https://github.com/{owner_repo}"
+            elif raw_url.startswith("https://github.com/") or raw_url.startswith(
+                "http://github.com/"
+            ):
+                owner_repo = raw_url.split("github.com/", 1)[1]
+                owner_repo = owner_repo.rstrip(".git")
+                github_url = f"https://github.com/{owner_repo}"
+
+        if not github_url:
+            raise RuntimeError(
+                "未找到 GitHub 远程，请确保此项目属于某个 GitHub 仓库（配置 remote）。"
+            )
+
+        # owner 与 repo
+        owner_repo = github_url.rstrip("/").split("github.com/")[-1]
+
+        # 3) 检测默认分支（优先 origin/HEAD），回退 main，再回退 master
+        branch = None
+        try:
+            head_ref = (
+                subprocess.check_output(
+                    [
+                        "git",
+                        "-C",
+                        git_root,
+                        "symbolic-ref",
+                        "--short",
+                        "refs/remotes/origin/HEAD",
+                    ],
+                    stderr=subprocess.STDOUT,
+                )
+                .decode()
+                .strip()
+            )
+            # 形如 origin/main
+            if "/" in head_ref:
+                branch = head_ref.split("/", 1)[1]
+        except subprocess.CalledProcessError:
+            pass
+
+        if not branch:
+            # 若无法检测，尝试存在性检查
+            for b in ("main", "master"):
+                try:
+                    subprocess.check_output(
+                        ["git", "-C", git_root, "rev-parse", f"origin/{b}"],
+                        stderr=subprocess.STDOUT,
+                    )
+                    branch = b
+                    break
+                except subprocess.CalledProcessError:
+                    continue
+
+        if not branch:
+            # 兜底 main
+            branch = "main"
+
+        self.raw_mirror_url = (
+            f"https://raw.githubusercontent.com/{owner_repo}/{branch}/"
+        )
+        self.owner_repo = owner_repo
+        self.branch = branch
+        return github_url
+
+    def relative_path_to_url(self, ori_path: str, mirror_url: Optional[str]) -> str:
+        """
+        将仓库内相对路径转为可直接访问的图片 URL。
+        例（owner/repo = xxx/xxx.github.io, 分支 main, 路径 img/ddn-intro.png）：
+        - 当 mirror_url 为空：
+          https://raw.githubusercontent.com/xxx/xxx.github.io/main/img/ddn-intro.png
+        - 当 mirror_url 不为空：
+          f"{mirror_url}/xxx/xxx.github.io/blob/main/img/ddn-intro.png?raw=true"
+        """
+        if not self.raw_mirror_url:
+            raise RuntimeError("尚未初始化仓库信息，请先调用 find_github_url()。")
+
+        # 统一路径分隔符
+        rel_path = ori_path.replace("\\", "/").lstrip("./")
+        raw_url = f"{self.raw_mirror_url}{rel_path}"
+        if mirror_url:
+            gh_url = f"https://github.com/{self.owner_repo}/blob/{self.branch}/{rel_path}?raw=true"
+            return gh_url.replace("https://github.com/", f"{mirror_url.rstrip('/')}/")
+        return raw_url
+
+    # ---------------- 图片/公式处理 ----------------
     def _rename_image_ref(self, match, file_parent: str, original: bool = True):
-        """重命名图片引用的内部方法"""
+        """图片链接替换：将相对路径替换为 GitHub 原图地址"""
         ori_path = match.group(2) if original else match.group(1)
 
-        # Remove any leading ./ from the path
+        # 去掉前导 ./
         if ori_path.startswith("./"):
             ori_path = ori_path[2:]
 
-        # Check if the image file exists relative to the markdown file
+        # 本地实际路径（相对于 markdown 文件）
         full_local_path = op.join(file_parent, ori_path)
         if not op.exists(full_local_path):
-            print(f"Warning: Image file not found: {full_local_path}")
-            return match.group(0)  # Return original if file doesn't exist
+            # print(f"非本地图片文件，跳过: {full_local_path}")
+            return match.group(0)
 
-        # Convert relative path to absolute URL
-        github_url = self.base_url + ori_path
+        if not self.git_root or not self.raw_mirror_url:
+            # 第一次时，根据 markdown 所在目录初始化
+            try:
+                self.find_github_url(file_parent)
+            except RuntimeError:
+                # 没有 git 或不是 GitHub 仓库，保持原样
+                return match.group(0)
 
-        print(f"Local path: {full_local_path}")
-        print(f"Converted URL: {github_url}")
+        # 计算仓库内相对路径
+        try:
+            rel_to_repo = os.path.relpath(full_local_path, str(self.git_root))
+        except Exception:
+            # 兜底：若计算失败，按原始相对路径
+            rel_to_repo = ori_path
+
+        github_url = self.relative_path_to_url(rel_to_repo, self.mirror_url)
+
+        print(f"本地: {full_local_path}")
+        print(f"链接: {github_url}")
 
         if original:
             return "![" + match.group(1) + "](" + github_url + ")"
@@ -97,11 +257,9 @@ class ZhihuMDConverter:
 
     def image_ops(self, lines: str, file_parent: str) -> str:
         """
-        处理图片链接
-
-        支持两种格式：
+        处理图片链接：
         1. ![]()
-        2. <img src="LINK" alt="CAPTION" style="zoom:40%;" />
+        2. <img src="LINK" alt="..." />
         """
         lines = re.sub(
             r"\!\[(.*?)\]\((.*?)\)",
@@ -121,16 +279,10 @@ class ZhihuMDConverter:
 
     def reduce_single_image_size(self, image_path: Union[str, Path]) -> Path:
         """
-        压缩单个图片大小（当前未使用）
-
-        Args:
-            image_path: 图片路径
-
-        Returns:
-            压缩后的图片路径
+        压缩单图（暂未启用）
         """
         if Image is None:
-            raise ImportError("PIL is required for image compression")
+            raise ImportError("需要安装 Pillow 才能压缩图片")
 
         output_path = Path(image_path).parent / (Path(image_path).stem + ".jpg")
         if op.exists(image_path):
@@ -153,111 +305,48 @@ class ZhihuMDConverter:
     ) -> str:
         """
         转换 Markdown 文件
-
-        Args:
-            input_path: 输入文件路径
-            output_path: 输出文件路径，如果为 None 则自动生成
-
-        Returns:
-            输出文件路径
         """
         input_path = Path(input_path)
         file_parent = str(input_path.parent)
 
-        # 检测编码
+        # 初始化仓库信息（用于图片链接）
+        try:
+            self.find_github_url(file_parent)
+        except RuntimeError as e:
+            print(f"提示: {e}")
+            # 若没有 GitHub 仓库，仍可继续，但图片不会替换为 raw 链接
+            self.git_root = None
+            self.raw_mirror_url = None
+
+        # 编码
         encoding = self.encoding
         if encoding is None:
             encoding = self.detect_encoding(input_path)
 
-        # 读取文件内容
+        # 读文件
         with open(str(input_path), "r", encoding=encoding) as f:
             lines = f.read()
 
-        # 处理图片和公式
+        # 图片与公式
         lines = self.image_ops(lines, file_parent)
         lines = self.formula_ops(lines)
 
-        # 确定输出路径
+        # 输出路径
         if output_path is None:
             output_path = op.join(file_parent, input_path.stem + "_for_zhihu.md")
         else:
             output_path = str(output_path)
 
-        # 写入转换后的内容
+        # 写出
         with open(output_path, "w+", encoding=encoding) as fw:
             fw.write(lines)
 
-        print(f"Output file created: {output_path}")
+        print(f"已生成: {output_path}")
         return output_path
 
     def git_ops(self, input_path: Union[str, Path]):
-        """推送更改到 GitHub"""
+        """将变更推送到 GitHub"""
         input_path = Path(input_path)
         subprocess.run(["git", "add", "-A"])
         subprocess.run(["git", "commit", "-m", f"update file {input_path.stem}"])
         subprocess.run(["git", "push", "-u", "origin", "master"])
-
-
-def main():
-    """命令行入口点"""
-    parser = argparse.ArgumentParser(
-        description="将 Markdown 文件转换为适合知乎导入的格式", prog="zhihu-md"
-    )
-    parser.add_argument(
-        "--compress",
-        action="store_true",
-        help="Compress the image which is too large (currently not used)",
-    )
-    parser.add_argument(
-        "-i",
-        "--input",
-        type=str,
-        required=True,
-        help="Path to the file you want to transfer.",
-    )
-    parser.add_argument(
-        "-o",
-        "--output",
-        type=str,
-        help="Output file path (optional, will auto-generate if not provided)",
-    )
-    parser.add_argument(
-        "-e",
-        "--encoding",
-        type=str,
-        help="Encoding of the input file (will auto-detect if not provided)",
-    )
-    parser.add_argument(
-        "--base-url", type=str, default=None, help="Base URL for images"
-    )
-    parser.add_argument(
-        "--git", action="store_true", help="Push changes to git after conversion"
-    )
-
-    args = parser.parse_args()
-
-    # 创建转换器实例
-    converter = ZhihuMDConverter(
-        base_url=args.base_url, encoding=args.encoding, compress_images=args.compress
-    )
-
-    try:
-        # 执行转换
-        output_path = converter.convert_file(args.input, args.output)
-
-        # 如果需要，执行 git 操作
-        if args.git:
-            converter.git_ops(args.input)
-
-    except FileNotFoundError:
-        print(f"Error: File not found: {args.input}")
-        return 1
-    except Exception as e:
-        print(f"Error: {e}")
-        return 1
-
-    return 0
-
-
-if __name__ == "__main__":
-    exit(main())

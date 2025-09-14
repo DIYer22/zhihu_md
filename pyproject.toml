@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zhihu_md"
-version = "0.0.1"
+version = "0.1.0"
 description = "把 markdown 转换为知乎能正常导入的 markdown。支持自动处理图片、公式"
 authors = [
     {name = "DIYer22", email = "ylxx@live.com"},
@@ -27,7 +27,7 @@ classifiers = [
 keywords = ["zhihu_md"]
 
 [project.scripts]
-zhihu-md = "zhihu_md.main:main"
+zhihu_md = "zhihu_md.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/DIYer22/zhihu_md"
