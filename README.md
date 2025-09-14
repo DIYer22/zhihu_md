@@ -1,8 +1,6 @@
-# `zhihu_md`: 自动转换为知乎编辑器支持的 markdown, 支持图片、公式和表格
-
+# `zhihu_md`: 把 markdown 转换为知乎编辑器支持的格式，并自动处理好图片和公式
 
 ## 用法
-
 ```bash
 # 安装
 pip install zhihu_md -U
@@ -13,11 +11,10 @@ python -m zhihu_md --help  # 或者 zhihu_md --help
 # 使用
 python -m zhihu_md your_markdown.md  # 或者 zhihu_md xxx.md
 # 自动生成 your_markdown_for_zhihu.md
-
-# 如果包含图片，请确保图片和 markdown 都在一个公开的 github repo 中。
-# zhihu_md 会自动通过 git remote -v 获取 github repo 地址
-# 然后把 markdown 中的 img 转换为知乎能访问的 github 代理地址
 ```
+- 如果包含本地图片，请确保图片和 markdown 文件都 `git push` 到公开的 GitHub repo。
+- zhihu_md 会自动通过 git remote -v 获取 GitHub repo 地址
+- 然后把 markdown 中的本地 img 转换为知乎能访问的 GitHub 代理地址
 
 ## 原理
 ### 图片上传
@@ -35,7 +32,6 @@ python -m zhihu_md your_markdown.md  # 或者 zhihu_md xxx.md
         - 一键安装，无需配置
         - 通过镜像站来支持 GitHub 图片上传
         - 对文件结构无要求，更加灵活
-        - 增加了对公式的支持
 - [VSCode-Zhihu](https://github.com/niudai/VSCode-Zhihu)（失去维护）
-    - [作者放弃维护](https://github.com/niudai/VSCode-Zhihu/issues/193) 已经无法登录和使用
+    - [作者放弃维护](https://github.com/niudai/VSCode-Zhihu/issues/193)，已经无法登录和使用
 

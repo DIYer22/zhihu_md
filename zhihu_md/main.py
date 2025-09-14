@@ -26,7 +26,7 @@ class ZhihuMDConverter:
 
     def __init__(
         self,
-        mirror_url: str = None,
+        mirror_url: str = DEFAULT_MIRROR_URL,
         encoding: Optional[str] = None,
         compress_images: bool = False,
     ):
@@ -231,12 +231,8 @@ class ZhihuMDConverter:
             return match.group(0)
 
         if not self.git_root or not self.raw_mirror_url:
-            # 第一次时，根据 markdown 所在目录初始化
-            try:
-                self.find_github_url(file_parent)
-            except RuntimeError:
-                # 没有 git 或不是 GitHub 仓库，保持原样
-                return match.group(0)
+            # 需要 Git 信息但尚未初始化，直接尝试初始化；失败则抛错退出
+            self.find_github_url(file_parent)
 
         # 计算仓库内相对路径
         try:
@@ -277,6 +273,45 @@ class ZhihuMDConverter:
         )
         return lines
 
+    def _has_local_images(self, text: str, file_parent: str) -> bool:
+        """
+        预扫描内容中是否包含“指向本地文件且真实存在”的图片引用。
+
+        - Markdown: ![alt](path)
+        - HTML: <img src="path" ...>
+        仅当 path 不是 http(s) 或 data:，且拼接到 file_parent 后存在时返回 True。
+        """
+        # Markdown 图片
+        md_paths = re.findall(r"!\[[^\]]*\]\(([^)]+)\)", text)
+        # HTML 图片（同时支持单/双引号）
+        html_paths = re.findall(r"<img\s+[^>]*src=[\"']([^\"']+)[\"']", text)
+        candidates = md_paths + html_paths
+
+        def is_remote(p: str) -> bool:
+            ps = p.strip()
+            return (
+                ps.startswith("http://")
+                or ps.startswith("https://")
+                or ps.startswith("//")
+                or ps.startswith("data:")
+            )
+
+        for raw in candidates:
+            # 处理 markdown 中可能出现的标题，例如: (a.png "title")
+            cand = raw.strip()
+            if not cand:
+                continue
+            # 拆掉可能的 title，取第一个空白前的部分
+            cand = cand.split()[0].strip("\"'")
+            if is_remote(cand):
+                continue
+            # 去掉可能的前导 ./
+            local_path = cand[2:] if cand.startswith("./") else cand
+            full_local_path = op.join(file_parent, local_path)
+            if op.exists(full_local_path):
+                return True
+        return False
+
     def reduce_single_image_size(self, image_path: Union[str, Path]) -> Path:
         """
         压缩单图（暂未启用）
@@ -309,15 +344,6 @@ class ZhihuMDConverter:
         input_path = Path(input_path)
         file_parent = str(input_path.parent)
 
-        # 初始化仓库信息（用于图片链接）
-        try:
-            self.find_github_url(file_parent)
-        except RuntimeError as e:
-            print(f"提示: {e}")
-            # 若没有 GitHub 仓库，仍可继续，但图片不会替换为 raw 链接
-            self.git_root = None
-            self.raw_mirror_url = None
-
         # 编码
         encoding = self.encoding
         if encoding is None:
@@ -326,6 +352,11 @@ class ZhihuMDConverter:
         # 读文件
         with open(str(input_path), "r", encoding=encoding) as f:
             lines = f.read()
+
+        # 仅当存在本地图片时，才尝试检测 Git 仓库；否则无需依赖 Git
+        if self._has_local_images(lines, file_parent):
+            # 若没有 git 或不是 GitHub 仓库，find_github_url 会抛出 RuntimeError，直接终止
+            self.find_github_url(file_parent)
 
         # 图片与公式
         lines = self.image_ops(lines, file_parent)

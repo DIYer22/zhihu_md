@@ -44,7 +44,11 @@ def main():
         parser.error(f"未找到文件: {in_path}")
 
     conv = ZhihuMDConverter(mirror_url=args.mirror_url, encoding=args.encoding)
-    conv.convert_file(in_path, args.output)
+    try:
+        conv.convert_file(in_path, args.output)
+    except RuntimeError as e:
+        # 直接报错退出（例如需要 git 但未检测到 git 仓库）
+        parser.error(str(e))
 
 
 if __name__ == "__main__":
